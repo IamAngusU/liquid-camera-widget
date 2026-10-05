@@ -16,6 +16,8 @@ Squircle, weiches Rechteck oder lebendiger Blob dargestellt werden.
 - federnd geglättetes Motiv-Tracking: Face Detection, wenn verfügbar, sonst
   lokale Bewegungserkennung
 - iPhone-Wechsel zwischen Front- und Rückkamera
+- Qualitäts-Toggle auf dem iPhone: volle Qualität bevorzugt bis zu 4K/60,
+  50 Mbit/s und `maintain-resolution`; Balanced priorisiert Verbindungsstabilität
 - Rücksicht auf `prefers-reduced-motion`
 
 ## Schnellstart

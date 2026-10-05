@@ -6,10 +6,42 @@ import { CameraIcon, RotateCameraIcon } from "./Icons";
 type SenderStatus = "idle" | "requesting" | "connecting" | "live" | "error";
 type FacingMode = "user" | "environment";
 
+function qualityConstraints(fullQuality: boolean): MediaTrackConstraints {
+  return fullQuality
+    ? {
+        width: { ideal: 3840 },
+        height: { ideal: 2160 },
+        frameRate: { ideal: 60, max: 60 }
+      }
+    : {
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+        frameRate: { ideal: 30, max: 30 }
+      };
+}
+
+async function tuneOutgoingVideo(call: MediaConnection, fullQuality: boolean) {
+  const sender = call.peerConnection
+    ?.getSenders()
+    .find((candidate) => candidate.track?.kind === "video");
+  if (!sender) return;
+
+  const parameters = sender.getParameters();
+  if (!parameters.encodings?.length) parameters.encodings = [{}];
+  const encoding = parameters.encodings[0];
+  encoding.maxBitrate = fullQuality ? 50_000_000 : 6_000_000;
+  encoding.maxFramerate = fullQuality ? 60 : 30;
+  encoding.scaleResolutionDownBy = 1;
+  parameters.degradationPreference = fullQuality ? "maintain-resolution" : "balanced";
+
+  await sender.setParameters(parameters);
+}
+
 export function MobileSender() {
   const [target, setTarget] = useState(() => readTargetPeer(window.location.hash));
   const [status, setStatus] = useState<SenderStatus>("idle");
   const [facing, setFacing] = useState<FacingMode>("user");
+  const [fullQuality, setFullQuality] = useState(true);
   const [error, setError] = useState("");
   const localVideo = useRef<HTMLVideoElement>(null);
   const peerRef = useRef<Peer>();
@@ -24,7 +56,7 @@ export function MobileSender() {
     };
   }, []);
 
-  const getCamera = async (nextFacing: FacingMode) => {
+  const getCamera = async (nextFacing: FacingMode, useFullQuality: boolean) => {
     if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
       throw new Error("Safari benötigt für die Kamera eine sichere HTTPS-Verbindung.");
     }
@@ -33,9 +65,7 @@ export function MobileSender() {
       audio: false,
       video: {
         facingMode: { ideal: nextFacing },
-        width: { ideal: 1920 },
-        height: { ideal: 1080 },
-        frameRate: { ideal: 60, max: 60 }
+        ...qualityConstraints(useFullQuality)
       }
     });
   };
@@ -44,9 +74,12 @@ export function MobileSender() {
     callRef.current?.close();
     setStatus("connecting");
     const call = peer.call(target.trim(), media, {
-      metadata: { source: "iPhone", facing }
+      metadata: { source: "iPhone", facing, fullQuality }
     });
     callRef.current = call;
+    const videoTrack = media.getVideoTracks()[0];
+    if (videoTrack) videoTrack.contentHint = fullQuality ? "detail" : "motion";
+    void tuneOutgoingVideo(call, fullQuality).catch(() => undefined);
     call.on("stream", () => setStatus("live"));
     call.on("close", () => setStatus("idle"));
     call.on("error", () => {
@@ -58,7 +91,10 @@ export function MobileSender() {
     // the peer connection state is the reliable signal for the sender UI.
     const connection = call.peerConnection;
     connection?.addEventListener("connectionstatechange", () => {
-      if (connection.connectionState === "connected") setStatus("live");
+      if (connection.connectionState === "connected") {
+        setStatus("live");
+        void tuneOutgoingVideo(call, fullQuality).catch(() => undefined);
+      }
       if (["failed", "closed", "disconnected"].includes(connection.connectionState)) {
         setStatus("error");
         setError("Der Kamerastream hat die Verbindung verloren.");
@@ -77,7 +113,7 @@ export function MobileSender() {
     setStatus("requesting");
     setError("");
     try {
-      const media = await getCamera(facing);
+      const media = await getCamera(facing, fullQuality);
       streamRef.current?.getTracks().forEach((track) => track.stop());
       streamRef.current = media;
       if (localVideo.current) {
@@ -125,7 +161,7 @@ export function MobileSender() {
     setFacing(nextFacing);
     setStatus("requesting");
     try {
-      const media = await getCamera(nextFacing);
+      const media = await getCamera(nextFacing, fullQuality);
       streamRef.current?.getTracks().forEach((track) => track.stop());
       streamRef.current = media;
       if (localVideo.current) {
@@ -136,6 +172,22 @@ export function MobileSender() {
     } catch {
       setStatus("error");
       setError("Die andere iPhone-Kamera konnte nicht geöffnet werden.");
+    }
+  };
+
+  const changeQuality = async (nextFullQuality: boolean) => {
+    setFullQuality(nextFullQuality);
+    setError("");
+
+    const track = streamRef.current?.getVideoTracks()[0];
+    if (!track) return;
+
+    try {
+      await track.applyConstraints(qualityConstraints(nextFullQuality));
+      track.contentHint = nextFullQuality ? "detail" : "motion";
+      if (callRef.current) await tuneOutgoingVideo(callRef.current, nextFullQuality);
+    } catch {
+      setError("Das iPhone konnte das gewählte Qualitätsprofil nicht vollständig übernehmen.");
     }
   };
 
@@ -168,10 +220,25 @@ export function MobileSender() {
 
       {connected ? (
         <div className="sender-connected">
-          <button onClick={switchCamera} className="camera-switch">
-            <RotateCameraIcon />
-            Kamera wechseln
-          </button>
+          <div className="sender-actions">
+            <button onClick={switchCamera} className="camera-switch">
+              <RotateCameraIcon />
+              Kamera wechseln
+            </button>
+            <label className="quality-toggle">
+              <span className="quality-copy">
+                <strong>Volle Qualität</strong>
+                <small>{fullQuality ? "Auflösung halten" : "Verbindung bevorzugen"}</small>
+              </span>
+              <input
+                type="checkbox"
+                checked={fullQuality}
+                onChange={(event) => void changeQuality(event.target.checked)}
+              />
+              <span className="quality-switch" aria-hidden="true" />
+            </label>
+          </div>
+          {error && <div className="sender-error">{error}</div>}
           <p>Safari geöffnet lassen, während du LumaDrop verwendest.</p>
         </div>
       ) : (
@@ -197,6 +264,19 @@ export function MobileSender() {
           )}
 
           {error && <div className="sender-error">{error}</div>}
+
+          <label className="quality-toggle quality-toggle-connect">
+            <span className="quality-copy">
+              <strong>Volle Qualität</strong>
+              <small>Bis 4K/60 bevorzugen, Auflösung halten</small>
+            </span>
+            <input
+              type="checkbox"
+              checked={fullQuality}
+              onChange={(event) => setFullQuality(event.target.checked)}
+            />
+            <span className="quality-switch" aria-hidden="true" />
+          </label>
 
           <button className="connect-button" type="submit" disabled={status === "requesting"}>
             {status === "requesting" ? "Kamera wird geöffnet …" : "Kamera verbinden"}
