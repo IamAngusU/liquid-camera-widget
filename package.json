@@ -13,7 +13,7 @@
     "build:icon": "node scripts/generate-icon.mjs",
     "build": "tsc -b && vite build",
     "build:desktop": "npm run build:icon && npm run build && electron-builder",
-    "deploy:pages": "npm run build && gh-pages -d dist -b gh-pages -t true",
+    "deploy:pages": "npm run build && gh-pages -d dist -b gh-pages --nojekyll",
     "preview": "vite preview --host 0.0.0.0",
     "test": "vitest run",
     "typecheck": "tsc -b --pretty false"
