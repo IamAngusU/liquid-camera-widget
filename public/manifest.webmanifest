@@ -1,0 +1,10 @@
+{
+  "name": "LumaDrop Camera",
+  "short_name": "LumaDrop",
+  "description": "Use an iPhone as a wireless camera for the LumaDrop desktop widget.",
+  "start_url": "./#/send",
+  "display": "standalone",
+  "background_color": "#080a0f",
+  "theme_color": "#080a0f",
+  "orientation": "portrait"
+}
