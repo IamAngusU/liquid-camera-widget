@@ -13,6 +13,7 @@
     "build:icon": "node scripts/generate-icon.mjs",
     "build": "tsc -b && vite build",
     "build:desktop": "npm run build:icon && npm run build && electron-builder",
+    "deploy:pages": "npm run build && gh-pages -d dist -b gh-pages -t true",
     "preview": "vite preview --host 0.0.0.0",
     "test": "vitest run",
     "typecheck": "tsc -b --pretty false"
@@ -33,6 +34,7 @@
     "cross-env": "^7.0.3",
     "electron": "^33.2.1",
     "electron-builder": "^25.1.8",
+    "gh-pages": "^6.3.0",
     "sharp": "^0.33.5",
     "typescript": "^5.7.2",
     "vite": "^6.0.5",

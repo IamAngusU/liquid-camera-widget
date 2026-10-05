@@ -60,6 +60,13 @@ Der iPhone-Sender wird über GitHub Pages ausgeliefert, weil Safari Kamerazugrif
 nur in einem sicheren HTTPS-Kontext erlaubt. In der Desktop-App kann eine andere
 Adresse über `VITE_SENDER_URL` gesetzt werden.
 
+Der geprüfte Web-Build liegt im Branch `gh-pages`. Nach Änderungen wird er ohne
+GitHub Actions direkt aktualisiert:
+
+```powershell
+npm run deploy:pages
+```
+
 ## Warum WLAN statt Bluetooth?
 
 Bluetooth ist für einen hochauflösenden, latenzarmen Videostream nicht geeignet
