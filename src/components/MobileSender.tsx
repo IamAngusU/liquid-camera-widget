@@ -4,12 +4,44 @@ import { readTargetPeer } from "../lib/constants";
 import { capabilities, cameraConstraint, capturePhoto, type CameraCaps } from "../lib/camera";
 import { LABEL, sendFiles } from "../lib/transfer.js";
 
+export function qualityConstraints(fullQuality: boolean, fps: number): MediaTrackConstraints {
+  return fullQuality
+    ? {
+        width: { ideal: 3840 },
+        height: { ideal: 2160 },
+        frameRate: { ideal: fps, max: fps }
+      }
+    : {
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+        frameRate: { ideal: fps, max: fps }
+      };
+}
+
+export async function tuneOutgoingVideo(call: MediaConnection, fullQuality: boolean, fps: number) {
+  const sender = call.peerConnection
+    ?.getSenders()
+    .find((candidate) => candidate.track?.kind === "video");
+  if (!sender) return;
+
+  const parameters = sender.getParameters();
+  if (!parameters.encodings?.length) parameters.encodings = [{}];
+  const encoding = parameters.encodings[0];
+  encoding.maxBitrate = fullQuality ? 50_000_000 : 6_000_000;
+  encoding.maxFramerate = fps;
+  encoding.scaleResolutionDownBy = 1;
+  parameters.degradationPreference = fullQuality ? "maintain-resolution" : "balanced";
+
+  await sender.setParameters(parameters);
+}
+
 export function MobileSender() {
   const keyring = new URLSearchParams(location.hash.split("?")[1]).get("mode")==="keyring";
   const [target,setTarget]=useState(()=>readTargetPeer(location.hash));
   const [status,setStatus]=useState("idle"),[error,setError]=useState("");
   const [facing,setFacing]=useState<"user"|"environment">(keyring?"environment":"user");
-  const [fps,setFps]=useState(30),[actual,setActual]=useState("");
+  const [fps,setFps]=useState(keyring?30:60),[actual,setActual]=useState("");
+  const [fullQuality,setFullQuality]=useState(true);
   const [caps,setCaps]=useState<CameraCaps>({}),[torch,setTorch]=useState(false),[zoom,setZoom]=useState(1);
   const [virtualZoom,setVirtualZoom]=useState(1),[ready,setReady]=useState(false),[busy,setBusy]=useState(false);
   const [progress,setProgress]=useState(""),[view,setView]=useState("front"),[direction,setDirection]=useState("right");
@@ -38,10 +70,12 @@ export function MobileSender() {
     const state=await cameraConstraint(track,setting);
     setTorch(state.torch??false);setZoom(state.zoom??1);advertise();
   }
-  function startCall(p:Peer,media:MediaStream,nextFacing:string) {
+  function startCall(p:Peer,media:MediaStream,nextFacing:string,nextFps=fps) {
     const old=call.current;call.current=undefined;old?.close();
-    const next=p.call(target.trim(),media,{metadata:{source:"LumaDrop",facing:nextFacing}});call.current=next;
-    next.peerConnection?.addEventListener("connectionstatechange",()=>{if(call.current===next)setStatus(next.peerConnection.connectionState==="connected"?"live":"connecting");});
+    const track=media.getVideoTracks()[0];if(track)track.contentHint=fullQuality?"detail":"motion";
+    const next=p.call(target.trim(),media,{metadata:{source:"LumaDrop",facing:nextFacing,fullQuality}});call.current=next;
+    const tune=()=>void tuneOutgoingVideo(next,fullQuality,nextFps).catch(()=>setError("Browser konnte die gewünschte Encoder-Qualität nicht vollständig setzen."));
+    next.peerConnection?.addEventListener("connectionstatechange",()=>{if(call.current===next){const connected=next.peerConnection.connectionState==="connected";setStatus(connected?"live":"connecting");if(connected)tune();}});
     next.on("close",()=>{if(call.current===next){call.current=undefined;setStatus("ready");}});
     next.on("error",e=>setError(e.message));
   }
@@ -76,10 +110,10 @@ export function MobileSender() {
   async function startCamera(nextFacing=facing,makeCall=true,nextFps=fps) {
     stream.current?.getTracks().forEach(t=>t.stop());setTorch(false);setZoom(1);
     try {
-      const media=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:nextFacing},width:{ideal:1920},height:{ideal:1080},frameRate:{ideal:nextFps,max:nextFps}}});
+      const media=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:nextFacing},...qualityConstraints(fullQuality,nextFps)}});
       stream.current=media;setPreview(true);setFacing(nextFacing);
       if(video.current){video.current.srcObject=media;await video.current.play();}
-      advertise();if(makeCall&&peer.current?.open)startCall(peer.current,media,nextFacing);
+      advertise();if(makeCall&&peer.current?.open)startCall(peer.current,media,nextFacing,nextFps);
     }catch(e){setPreview(false);setCaps({});throw e;}
   }
   async function transmit(files:File[],source:string) {
@@ -88,6 +122,11 @@ export function MobileSender() {
     try {await sendFiles(link.current!,files,{view:settings.current.view,tip_direction:settings.current.direction,source},setProgress);}
     catch(e){setError(e instanceof Error?e.message:String(e));throw e;}
     finally{busyRef.current=false;setBusy(false);}
+  }
+  async function changeQuality(next:boolean) {
+    const track=stream.current?.getVideoTracks()[0];
+    if(track){await track.applyConstraints(qualityConstraints(next,fps));track.contentHint=next?"detail":"motion";if(call.current)await tuneOutgoingVideo(call.current,next,fps);advertise();}
+    setFullQuality(next);
   }
   async function snapshot() {
     if(capturing.current||busyRef.current)return;
@@ -110,6 +149,7 @@ export function MobileSender() {
     {!ready ? <form className="sender-connect" onSubmit={e=>{e.preventDefault();void connect();}}>
       <h1>Kamera & Originalfotos</h1><p>Vorschau streamen. Fotos einzeln oder gemeinsam direkt zum Computer senden.</p>
       <label>Kopplungscode<input value={target} onChange={e=>setTarget(e.target.value)} autoCapitalize="none" autoCorrect="off" spellCheck={false}/></label>
+      <label className="quality-toggle quality-toggle-connect"><span className="quality-copy"><strong>Volle Qualität</strong><small>Bis 4K bevorzugen; FPS separat wählbar</small></span><input type="checkbox" checked={fullQuality} onChange={e=>setFullQuality(e.target.checked)}/><span className="quality-switch" aria-hidden="true"/></label>
       <button className="connect-button" disabled={status==="connecting"}>Kamera verbinden</button>
       <button type="button" className="sender-action" disabled={status==="connecting"} onClick={()=>void connect(false)}>Nur Fotos verbinden</button>
       {status==="connecting"&&<button type="button" className="sender-action" onClick={disconnect}>Verbindung abbrechen</button>}
@@ -120,6 +160,7 @@ export function MobileSender() {
       <div className="capture-row"><button className="sender-action" disabled={busy||!preview} onClick={()=>act(snapshot)}>Jetzt Foto aufnehmen</button><label className="sender-action">Mediathek · mehrere<input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif" multiple disabled={busy} onChange={e=>{const files=Array.from(e.target.files??[]);e.target.value="";if(files.length)act(()=>transmit(files,"library"));}}/></label></div>
       <label className="sender-action">Kamera-App · Originalfoto<input type="file" accept="image/*" capture="environment" disabled={busy} onChange={e=>{const files=Array.from(e.target.files??[]);e.target.value="";if(files.length)act(()=>transmit(files,"camera-original"));}}/></label>
       <details><summary>Licht, Zoom & Vorschau</summary>
+        <label className="quality-toggle"><span className="quality-copy"><strong>Volle Qualität</strong><small>{fullQuality?"Auflösung halten · bis 50 Mbit/s":"Verbindung bevorzugen · bis 6 Mbit/s"}</small></span><input type="checkbox" checked={fullQuality} disabled={busy} onChange={e=>act(()=>changeQuality(e.target.checked))}/><span className="quality-switch" aria-hidden="true"/></label>
         <div className="capture-row"><button className="sender-action" disabled={busy||!caps.torch} aria-pressed={torch} onClick={()=>act(()=>change({torch:!torch}))}>{caps.torch?`Taschenlampe ${torch?"aus":"an"}`:"Taschenlampe nicht freigegeben"}</button><button className="sender-action" disabled={busy} onClick={()=>act(()=>startCamera(preview?(facing==="user"?"environment":"user"):facing))}>{preview?"Kamera wechseln":"Vorschau starten"}</button></div>
         <label>Kamera-Zoom {zoom.toFixed(1)}× {caps.zoom?"":"· nicht freigegeben"}<input type="range" min={caps.zoom?.min??1} max={caps.zoom?.max??1} step={caps.zoom?.step||.1} value={zoom} disabled={busy||!caps.zoom} onChange={e=>act(()=>change({zoom:Number(e.target.value)}))}/></label>
         <label>Ansichtszoom {virtualZoom.toFixed(1)}× · ändert keine Fotopixel<input type="range" min="1" max="4" step=".1" value={virtualZoom} onChange={e=>setVirtualZoom(Number(e.target.value))}/></label>
