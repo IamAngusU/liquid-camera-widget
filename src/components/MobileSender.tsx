@@ -85,13 +85,13 @@ export function MobileSender() {
     setError("");setStatus("connecting");
     try {
       if(withCamera)await startCamera(facing,false);
-      if(peer.current?.open) {if(withCamera&&stream.current)startCall(peer.current,stream.current,facing);return;}
+      if(peer.current?.open&&link.current?.open) {if(withCamera&&stream.current)startCall(peer.current,stream.current,facing);return;}
       peer.current?.destroy();
       const p=new Peer({config:{iceServers:[{urls:"stun:stun.l.google.com:19302"},{urls:"stun:stun1.l.google.com:19302"}]}});peer.current=p;
       p.on("open",()=>{
         const channel=p.connect(target.trim(),{reliable:true,label:LABEL});link.current=channel;
         channel.on("open",()=>{setReady(true);setStatus("ready");advertise();});
-        channel.on("close",()=>{setReady(false);setError("Dateikanal getrennt. Erneut verbinden.");});
+        channel.on("close",()=>{if(link.current===channel){setReady(false);setError("Dateikanal getrennt. Erneut verbinden.");}});
         channel.on("error",e=>setError(e.message));
         channel.on("data",async(raw)=>{
           const m=raw as {type?:string;action?:string;value?:number|boolean};
@@ -104,8 +104,8 @@ export function MobileSender() {
         });
         if(stream.current)startCall(p,stream.current,facing);
       });
-      p.on("error",e=>{setStatus("error");setError(e.type==="peer-unavailable"?"Empfänger nicht erreichbar. Kopplungscode prüfen.":e.message);});
-    }catch(e){setStatus("error");setError(e instanceof Error?e.message:String(e));}
+      p.on("error",e=>{if(peer.current!==p)return;disconnect();setStatus("error");setError(e.type==="peer-unavailable"?"Empfänger nicht erreichbar. Kopplungscode prüfen.":e.message);});
+    }catch(e){disconnect();setStatus("error");setError(e instanceof Error?e.message:String(e));}
   }
   async function startCamera(nextFacing=facing,makeCall=true,nextFps=fps) {
     stream.current?.getTracks().forEach(t=>t.stop());setTorch(false);setZoom(1);
