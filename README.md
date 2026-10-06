@@ -18,6 +18,22 @@ Squircle, weiches Rechteck oder lebendiger Blob dargestellt werden.
 - iPhone-Wechsel zwischen Front- und Rückkamera
 - Rücksicht auf `prefers-reduced-motion`
 
+## Neu in 0.2: Aufnehmen und übertragen
+
+- **Mediathek:** ein oder mehrere JPEG/PNG/WebP/HEIC-Dateien unverändert zum Empfänger senden. Auch „Nur Fotos verbinden“ ohne Kamerazugriff. Bis 30 Dateien pro Auswahl, je 32 MB. Serieller 48-KiB-Transfer mit Bestätigung, SHA-256-Prüfung und separater Empfangsbestätigung. Verbindungs-/Speicherfehler werden nicht als Erfolg gemeldet; keine automatische Wiederholung mit Duplikaten.
+- **Jetzt Foto aufnehmen:** `ImageCapture.takePhoto()` wenn vorhanden; sonst transparent gekennzeichnetes Videobild. **Kamera-App · Originalfoto** bietet zusätzlich den nativen `capture=environment`-Fotoeingang. Safari bestimmt die genaue Oberfläche. Ein Videoframe ersetzt kein hochauflösendes Originalfoto.
+- **Taschenlampe und Kamera-Zoom:** `getCapabilities()` entscheidet, ob Bedienelemente freigegeben sind. Nicht jeder Browser/iPhone-Modus unterstützt diese Funktionen. Keine nachgeahmte „Taschenlampe“, die lediglich den Bildschirm heller macht. Quellen: [MediaTrackConstraints](https://developer.mozilla.org/en-US/docs/Web/API/MediaTrackConstraints), [takePhoto](https://developer.mozilla.org/en-US/docs/Web/API/ImageCapture/takePhoto).
+- **Fernbedienung:** erst nach sichtbarer Freigabe am Sender. Dann darf der gekoppelte Computer Licht/Zoom ändern und ein Foto auslösen. Die Mediathek bleibt ausschließlich eine lokale Benutzerauswahl.
+- **Ansichtszoom:** 1-4× am Sender und Widget, getrennt vom Kamera-Zoom. Vergrößert nur die Ansicht, verändert keine übertragenen Originaldateien und verbessert keine Messauflösung.
+- **Vorschau:** 30 FPS Standardwunsch, 15/30/60 wählbar. Angezeigt werden die Kameratrack-Einstellungen, nicht garantierte Empfangs-FPS. 60 FPS nur, soweit Gerät/Browser es erfüllen; mehr FPS ersetzen kein scharfes Foto.
+- **Keyring-Modus:** `#/send?to=PEER&mode=keyring` startet mit Rückkamera und überträgt A/B/Kante/Detail sowie Spitzenrichtung. Keine automatische Spiegelung oder Vermischung verschiedener Seiten.
+
+Das normale Widget hält empfangene Fotos **nur im Arbeitsspeicher** (höchstens 30 Fotos / 96 MB): vor dem Schließen über die sichtbaren Links herunterladen. Ein angeschlossener Keyring-Empfänger bestätigt dagegen nach Speicherung im lokalen Archiv. Der erste verbundene Peer bindet die Sitzung; neue Kopplung durch Neuladen. Kopplungscode wie einen temporären Zugang behandeln.
+
+Getestet: Build/TypeScript, zehn automatisierte Tests, echte Browser-zu-Browser-Übertragung zweier synthetischer PNGs nach Keyring mit Empfangsbestätigung und responsives Layout. Torch, echte Objektiv-/Sensorzoom-Stufen und Kamera-App-Rückkehr müssen noch am echten iPhone geprüft werden.
+
+`npm audit --omit=dev` meldete beim Update keine Produktionsabhängigkeits-Funde. Die vorhandene Desktop-/Build-Toolchain meldet weiterhin 30 Audit-Funde; kein blindes `audit fix --force`, keine Behauptung einer Security-Freigabe. Ein neuer nativer Installer gehört nicht zu diesem Web-Update.
+
 ## Schnellstart
 
 Voraussetzungen: Node.js 20 oder neuer und npm.
@@ -77,7 +93,7 @@ oder Discovery dienen, ist aber nicht Teil des aktuellen Prototyps.
 ## Datenschutz
 
 - kein Konto innerhalb von LumaDrop
-- kein eigener Video-Upload oder Recording-Code
+- keine serverseitige Videoaufzeichnung; Fotos werden nur nach Auswahl/Auslösung per WebRTC zum gekoppelten Empfänger übertragen
 - Kamera wird erst nach einer sichtbaren Aktion auf dem iPhone geöffnet
 - Video- und Audiostreams enthalten nur Video; Audio ist deaktiviert
 - beim Schließen der Sender-Seite werden Kameratracks beendet

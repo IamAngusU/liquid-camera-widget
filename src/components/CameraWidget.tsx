@@ -1,4 +1,5 @@
-import Peer, { type MediaConnection } from "peerjs";
+import Peer, { type DataConnection, type MediaConnection } from "peerjs";
+import { LABEL, receiveFiles } from "../lib/transfer.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAdaptiveFocus } from "../hooks/useAdaptiveFocus";
 import {
@@ -24,6 +25,12 @@ export function CameraWidget() {
   const [error, setError] = useState<string>();
   const [stream, setStream] = useState<MediaStream>();
   const [controlsVisible, setControlsVisible] = useState(true);
+  const [virtualZoom,setVirtualZoom]=useState(1);
+  const [remote,setRemote]=useState<{remote?:boolean;torch?:boolean;zoom?:{min:number;max:number;step:number};settings?:{torch?:boolean;zoom?:number}}>({});
+  const [photos,setPhotos]=useState<{url:string;name:string}[]>([]);
+  const [transferStatus,setTransferStatus]=useState("");
+  const dataLink=useRef<DataConnection>(),owner=useRef<string>(),received=useRef<{url:string;size:number}[]>([]);
+  const disposeReceiver=useRef<()=>void>();
   const videoRef = useRef<HTMLVideoElement>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
   const hideTimer = useRef<number>();
@@ -54,7 +61,21 @@ export function CameraWidget() {
       setError(undefined);
     });
 
+    peer.on("connection",connection=>{
+      if(connection.label!==LABEL||(owner.current&&owner.current!==connection.peer)||dataLink.current?.open){connection.close();return;}
+      owner.current=connection.peer;dataLink.current=connection;
+      disposeReceiver.current?.();
+      disposeReceiver.current=receiveFiles(connection,async(blob,info)=>{
+        if(received.current.length>=30||received.current.reduce((n,f)=>n+f.size,0)+blob.size>96*1024*1024)throw new Error("Empfangsspeicher voll. Fotos speichern und Widget neu öffnen.");
+        const url=URL.createObjectURL(blob);received.current.push({url,size:blob.size});
+        setPhotos(items=>[...items,{url,name:info.name}]);
+      },setTransferStatus);
+      connection.on("data",raw=>{const m=raw as typeof remote & {type?:string;message?:string};if(m.type==="camera-state")setRemote(m);if(m.type==="camera-error")setTransferStatus(m.message??"Kamera-Befehl fehlgeschlagen");});
+      connection.on("close",()=>{setRemote({});if(dataLink.current===connection)dataLink.current=undefined;});
+    });
     peer.on("call", (call) => {
+      if(owner.current&&owner.current!==call.peer){call.close();return;}
+      owner.current=call.peer;
       activeCall.current?.close();
       activeCall.current = call;
       setStatus("connecting");
@@ -65,6 +86,8 @@ export function CameraWidget() {
         setError(undefined);
       });
       call.on("close", () => {
+        if(activeCall.current!==call)return;
+        activeCall.current=undefined;
         setStream(undefined);
         setStatus("ready");
       });
@@ -86,7 +109,9 @@ export function CameraWidget() {
     });
 
     return () => {
-      activeCall.current?.close();
+      const previous=activeCall.current;activeCall.current=undefined;previous?.close();
+      disposeReceiver.current?.();dataLink.current?.close();
+      received.current.forEach(f=>URL.revokeObjectURL(f.url));received.current=[];
       peer.destroy();
     };
   }, []);
@@ -145,6 +170,7 @@ export function CameraWidget() {
           ref={videoRef}
           className="camera-video"
           data-mirrored={mirrored}
+          style={{scale:`${virtualZoom}`}}
           autoPlay
           playsInline
           muted
@@ -185,6 +211,18 @@ export function CameraWidget() {
       </div>
 
       <div className="dock-wrap" data-visible={controlsVisible}>
+        <details className="widget-capture" onToggle={e=>{if(e.currentTarget.open){setControlsVisible(true);window.clearTimeout(hideTimer.current);}}}>
+          <summary>Fotos & Kamera</summary>
+          <label>Ansichtszoom {virtualZoom.toFixed(1)}×<input aria-label="Widget-Ansichtszoom" type="range" min="1" max="4" step=".1" value={virtualZoom} onChange={e=>setVirtualZoom(Number(e.target.value))}/></label>
+          <p>Nur Anzeige; Originalfotos bleiben unverändert.</p>
+          <button disabled={!remote.remote} onClick={()=>dataLink.current?.send({type:"camera-command",action:"capture"})}>Foto am Handy auslösen</button>
+          <button disabled={!remote.remote||!remote.torch} onClick={()=>dataLink.current?.send({type:"camera-command",action:"torch",value:!remote.settings?.torch})}>Taschenlampe {remote.settings?.torch?"aus":"an"}</button>
+          <label>Kamera-Zoom<input aria-label="Handy-Kamerazoom" type="range" min={remote.zoom?.min??1} max={remote.zoom?.max??1} step={remote.zoom?.step||.1} value={remote.settings?.zoom??1} disabled={!remote.remote||!remote.zoom} onChange={e=>dataLink.current?.send({type:"camera-command",action:"zoom",value:Number(e.target.value)})}/></label>
+          {!remote.remote&&<p>Fernbedienung zuerst am Handy erlauben.</p>}
+          <p role="status">{transferStatus}</p>
+          {photos.length>0&&<p>Vor dem Schließen herunterladen. Fotos sind bisher nur im Arbeitsspeicher.</p>}
+          {photos.map(photo=><a key={photo.url} href={photo.url} download={photo.name}>{photo.name} speichern</a>)}
+        </details>
         <ControlDock
           aspect={aspect}
           shape={shape}
